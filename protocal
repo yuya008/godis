@@ -1,0 +1,44 @@
+use [数据库名]
+
+strings
+set key value
+get key
+append key value
+incr key [value]
+decr key [value]
+range key start end
+len key
+del key
+
+
+lists
+add key element
+get key
+insert key index element
+index key index
+len key
+getset key key
+del key element
+
+queue
+push
+pop
+pick
+
+hash
+set key key value
+get key key
+del key key
+
+set
+set key key
+del key
+Intersection key key
+union key key
+diff key key
+
+Transaction
+begin
+commit
+rollback
+
