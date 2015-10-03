@@ -12,7 +12,7 @@ import (
 
 var (
 	success             = "[ok] success!"
-	BYE                 = "[ok] bye!"
+	bye                 = "[ok] bye!"
 	err_read_cmd        = errors.New("[error] read command fail!")
 	err_cmd             = errors.New("[error] command illegal!")
 	err_key_not_found   = errors.New("[error] the key not found!")
@@ -182,7 +182,7 @@ func cmdKeys(c *Client) {
 }
 
 func cmdBye(c *Client) {
-	reply(c, BYE, nil)
+	reply(c, bye, nil)
 }
 
 func reply(c *Client, status string, data []byte) {
