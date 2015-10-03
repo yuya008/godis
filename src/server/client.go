@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"db"
+	"log"
 	"net"
 )
 
@@ -30,6 +31,7 @@ func NewClient(c net.Conn, godis *Godis) *Client {
 	cli.Status = CLIENT_WAIT
 	cli.R = bufio.NewReader(cli.Conn)
 	cli.W = bufio.NewWriter(cli.Conn)
+	log.Println("创建一个客户端", cli)
 	godis.Lock()
 	defer godis.Unlock()
 
@@ -42,9 +44,18 @@ func NewClient(c net.Conn, godis *Godis) *Client {
 func (c *Client) Cancel() {
 	c.Conn.Close()
 	c.godis.Lock()
+	log.Println("注销一个客户端")
 	defer c.godis.Unlock()
 
 	c.godis.Clients.Remove(c.godis.ClientsMap[c])
 	delete(c.godis.ClientsMap, c)
 	c.godis.CurrentClientsN--
+}
+
+func (c *Client) ReplyBytes(data []byte) (int, error) {
+	return c.Conn.Write(data)
+}
+
+func (c *Client) ReplyString(data string) (int, error) {
+	return c.Conn.Write([]byte(data))
 }
