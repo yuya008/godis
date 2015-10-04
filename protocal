@@ -12,7 +12,7 @@ del key
 
 
 lists
-add key element
+put key element
 get key
 insert key index element
 index key index
@@ -26,7 +26,7 @@ pop
 pick
 
 hash
-set key key value
+hset key key value
 get key key
 del key key
 

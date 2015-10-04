@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"db"
 	"encoding/binary"
 	"errors"
 	"log"
@@ -11,13 +12,14 @@ import (
 )
 
 var (
-	success             = "[ok] success!"
-	bye                 = "[ok] bye!"
-	err_read_cmd        = errors.New("[error] read command fail!")
-	err_cmd             = errors.New("[error] command illegal!")
-	err_key_not_found   = errors.New("[error] the key not found!")
-	err_value_too_large = errors.New("[error] the value too large!")
-	err_db_not_found    = errors.New("[error] the db not found!")
+	success              = "[ok] success!"
+	bye                  = "[ok] bye!"
+	err_read_cmd         = errors.New("[error] read command fail!")
+	err_cmd              = errors.New("[error] command illegal!")
+	err_key_not_found    = errors.New("[error] the key not found!")
+	err_value_too_large  = errors.New("[error] the value too large!")
+	err_db_not_found     = errors.New("[error] the db not found!")
+	err_data_not_operate = errors.New("[error] can not do this operation!")
 )
 
 func Process(client *Client) {
@@ -37,6 +39,10 @@ func Process(client *Client) {
 			cmdUse(client)
 		case "keys":
 			cmdKeys(client)
+		case "append":
+			cmdAppend(client)
+		case "del":
+			cmdDel(client)
 		case "bye":
 			cmdBye(client)
 			log.Println("客户端退出")
@@ -127,7 +133,7 @@ func cmdGet(c *Client) {
 		reply(c, err_key_not_found.Error(), nil)
 		return
 	}
-	reply(c, success, valObj.GetRealData())
+	reply(c, success, valObj.GetBuffer())
 }
 func cmdDbs(c *Client) {
 	dbs := c.godis.Dbs
@@ -146,26 +152,11 @@ func cmdUse(c *Client) {
 		reply(c, err.Error(), nil)
 		return
 	}
-	id, err := strconv.Atoi(witchdb)
-	dbs := c.godis.Dbs
+	err = switchDb(c, c.godis.Dbs, witchdb)
 	if err != nil {
-		for i, db := range dbs {
-			if db.DbName == witchdb {
-				c.CurDB = &dbs[i]
-				goto end
-			}
-		}
-	} else {
-		for i, db := range dbs {
-			if db.Id == id {
-				c.CurDB = &dbs[i]
-				goto end
-			}
-		}
+		reply(c, err.Error(), nil)
+		return
 	}
-	reply(c, err_db_not_found.Error(), nil)
-	return
-end:
 	reply(c, success, nil)
 }
 
@@ -183,6 +174,48 @@ func cmdKeys(c *Client) {
 
 func cmdBye(c *Client) {
 	reply(c, bye, nil)
+}
+
+func cmdAppend(c *Client) {
+	key0, err := readKey(c)
+	if err != nil {
+		reply(c, err.Error(), nil)
+		return
+	}
+	db := c.CurDB
+	db.Lock()
+	defer db.Unlock()
+	valObj, ok := db.Data[key0]
+	if !ok {
+		reply(c, err_key_not_found.Error(), nil)
+		return
+	}
+	if valObj.GetObjectType() != object.STRING {
+		reply(c, err_data_not_operate.Error(), nil)
+		return
+	}
+	value0, err := readValue(c)
+	if err != nil {
+		reply(c, err.Error(), nil)
+		return
+	}
+	buffer := bytes.NewBuffer(valObj.GetBuffer())
+	buffer.Write(value0)
+	db.Data[key0] = object.CreateStringObject(buffer.Bytes())
+	reply(c, success, buffer.Bytes())
+}
+
+func cmdDel(c *Client) {
+	key0, err := readKey(c)
+	if err != nil {
+		reply(c, err.Error(), nil)
+		return
+	}
+	db := c.CurDB
+	db.Lock()
+	delete(db.Data, key0)
+	db.Unlock()
+	reply(c, success, nil)
 }
 
 func reply(c *Client, status string, data []byte) {
@@ -203,4 +236,24 @@ func reply(c *Client, status string, data []byte) {
 		buffer.Write(data)
 	}
 	c.ReplyBytes(buffer.Bytes())
+}
+
+func switchDb(c *Client, dbs []db.DB, witchdb string) error {
+	id, err := strconv.Atoi(witchdb)
+	if err != nil {
+		for i, db := range dbs {
+			if db.DbName == witchdb {
+				c.CurDB = &dbs[i]
+				return nil
+			}
+		}
+	} else {
+		for i, db := range dbs {
+			if db.Id == id {
+				c.CurDB = &dbs[i]
+				return nil
+			}
+		}
+	}
+	return err_db_not_found
 }

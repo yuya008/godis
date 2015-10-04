@@ -1,6 +1,7 @@
 package object
 
 import (
+	"container/list"
 	"sync"
 )
 
@@ -17,38 +18,34 @@ const (
 	SET = 5
 )
 
-type Object interface {
-	GetObjectType() int
-	GetRealData() []byte
-	LockObject()
-	UnLockObject()
-}
-
-type StringObj struct {
-	length int
-	d      []byte
+type Object struct {
+	objType   int
+	objLen    uint64
+	objBuffer []byte
+	objHash   map[string]*Object
+	objList   list.List
 	sync.Mutex
 }
 
-func CreateStringObject(data []byte) Object {
-	return &StringObj{
-		length: len(data),
-		d:      data,
+func CreateStringObject(data []byte) *Object {
+	return &Object{
+		objBuffer: data,
+		objType:   STRING,
 	}
 }
 
-func (o *StringObj) GetObjectType() int {
-	return STRING
+func (o *Object) GetObjectType() int {
+	return o.objType
 }
 
-func (o *StringObj) GetRealData() []byte {
-	return o.d
+func (o *Object) GetBuffer() []byte {
+	return o.objBuffer
 }
 
-func (o *StringObj) LockObject() {
-	o.Mutex.Lock()
+func (o *Object) LockObject() {
+	o.Lock()
 }
 
-func (o *StringObj) UnLockObject() {
-	o.Mutex.Unlock()
+func (o *Object) UnLockObject() {
+	o.Unlock()
 }
