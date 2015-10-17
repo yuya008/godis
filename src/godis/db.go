@@ -1,9 +1,8 @@
-package db
+package godis
 
 import (
+	ds "data_struct"
 	"fmt"
-	"object"
-	"sync"
 )
 
 type DB struct {
@@ -14,13 +13,18 @@ type DB struct {
 	// 数据库键数量
 	KeyN uint64
 	// 数据
-	Data map[string]*object.Object
-	// 数据库锁
-	sync.Mutex
+	Data map[string]*ds.Object
+	// 读写锁
+	lock *TsLock
 }
 
 func InitDB(id int, db *DB) {
 	db.Id = id
 	db.DbName = fmt.Sprintf("db%d", id)
-	db.Data = make(map[string]*object.Object)
+	db.Data = make(map[string]*ds.Object)
+	db.lock = NewTsLock()
+}
+
+func (db *DB) DeleteKey(key string) {
+	delete(db.Data, key)
 }

@@ -1,13 +1,12 @@
-package server
+package godis
 
 import (
 	"container/list"
-	"db"
 	"github.com/Terry-Mao/goconf"
 	"log"
-	_ "math"
 	"net"
 	"sync"
+	"time"
 )
 
 type Godis struct {
@@ -16,7 +15,7 @@ type Godis struct {
 	// 服务端口
 	Port string
 	// 数据库
-	Dbs []db.DB
+	Dbs []DB
 	// 客户端连接
 	Clients    *list.List
 	ClientsMap map[*Client]*list.Element
@@ -27,15 +26,19 @@ type Godis struct {
 	CurrentClientsN int
 	// 系统日志输出位置
 	SysLogPath string
-	// 协议命令数据最大长度
-	CmdMaxLen uint32
+	// 命令行参数数目限制
+	Cmdargsnum int
+	// 命令行一个参数长度限制(1M)
+	Cmdargsize uint64
+	// 事务锁超时时间
+	Tstimeout time.Duration
 }
 
 func InitGodis() *Godis {
 	return &Godis{
 		Host:       "127.0.0.1",
 		Port:       "1899",
-		Dbs:        make([]db.DB, 64),
+		Dbs:        make([]DB, 64),
 		Clients:    list.New(),
 		ClientsMap: make(map[*Client]*list.Element),
 	}
@@ -49,23 +52,24 @@ func InitServer(godis *Godis, c *goconf.Config) {
 	if v, err := ser.String("port"); err == nil {
 		godis.Port = v
 	}
-	if v, err := ser.Int("maxdbs"); err == nil {
-		godis.Dbs = make([]db.DB, v)
+	if v, err := ser.Int("max_dbs"); err == nil {
+		godis.Dbs = make([]DB, v)
 	}
 	for i := 0; i < len(godis.Dbs); i++ {
-		db.InitDB(i, &godis.Dbs[i])
+		InitDB(i, &godis.Dbs[i])
 	}
-	if v, err := ser.Int("maxclient"); err == nil {
+	if v, err := ser.Int("max_client"); err == nil {
 		godis.MaxClientsN = int(v)
 	}
-	/*
-		if v, err := ser.Int("cmdmaxlength"); err == nil {
-			if v > math.MaxUint32 {
-				log.Fatalln("config item 'cmdmaxlength' too big(<MaxUint32)")
-			}
-			godis.CmdMaxLen = uint32(v)
-		}
-	*/
+	if v, err := ser.Int("cmd_args_num"); err == nil {
+		godis.Cmdargsnum = int(v)
+	}
+	if v, err := ser.Int("cmd_arg_size"); err == nil {
+		godis.Cmdargsize = uint64(v)
+	}
+	if v, err := ser.Int("ts_trylock_timeout"); err == nil {
+		godis.Tstimeout = time.Millisecond * time.Duration(v)
+	}
 }
 
 func StartServer(godis *Godis) {

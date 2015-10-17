@@ -5,9 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"github.com/Terry-Mao/goconf"
+	"godis"
 	"log"
 	"os"
-	"server"
 )
 
 func usage(s error) {
@@ -32,7 +32,7 @@ func parseArgs() *goconf.Config {
 
 func main() {
 	log.Println("初始化godis")
-	godis_ptr := server.InitGodis()
-	server.InitServer(godis_ptr, parseArgs())
-	server.StartServer(godis_ptr)
+	godis_ptr := godis.InitGodis()
+	godis.InitServer(godis_ptr, parseArgs())
+	godis.StartServer(godis_ptr)
 }
