@@ -1,4 +1,4 @@
-package godis
+package data_struct
 
 type HashTable interface {
 }

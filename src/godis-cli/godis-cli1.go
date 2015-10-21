@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"time"
+	_ "time"
 )
 
 const (
@@ -21,6 +21,7 @@ const (
 	cmd_pop
 	cmd_begin
 	cmd_rollback
+	cmd_rollbackto
 	cmd_commit
 )
 
@@ -66,23 +67,6 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	fmt.Println("begin")
-	conn.Write(warp(cmd_begin, nil))
-	result0 := readData(conn)
-	fmt.Println(result0)
-	fmt.Println(string(result0))
-
-	fmt.Println("sget A C")
-	args := make([]string, 2)
-	args[0] = "A"
-	args[1] = "C"
-	conn.Write(warp(cmd_sget, args))
-	result1 := readData(conn)
-	fmt.Println(result1)
-	fmt.Println(string(result1))
-
-	time.Sleep(time.Second * 10)
-
 	fmt.Println("keys")
 	conn.Write(warp(cmd_keys, nil))
 	result2 := readData(conn)

@@ -1,7 +1,6 @@
-package godis
+package data_struct
 
 import (
-	"bytes"
 	"log"
 )
 
@@ -11,52 +10,58 @@ const (
 )
 
 type List interface {
-	Lput(*Object)
-	Rput(*Object)
-	Get(int) *Object
-	Lpop() *Object
-	Rpop() *Object
-	Remove(*Object)
+	Lput(interface{})
+	Rput(interface{})
+	Get(int) interface{}
+	Lpop() interface{}
+	Rpop() interface{}
+	Put(interface{})
+	Pop() interface{}
+	Remove(interface{})
 	Len() int
-	Index(a *Object) int
-	Insert(p, i int, a *Object)
+	Index(a interface{}) int
+	SubList(int, int) List
+	Insert(p, i int, a interface{})
 	Clear()
+	GetFirstNode() *node
+	GetTailNode() *node
 }
 
 type node struct {
-	value *Object
-	prev  *node
-	next  *node
+	Value interface{}
+	Prev  *node
+	Next  *node
 }
 
 type doublelinkedlist struct {
 	n    int
-	head *node
-	tail *node
+	Head *node
+	Tail *node
+	Eq   func(*node, *node) bool
 }
 
 func NewList() List {
-	return &doublelinkedlist{}
+	return &doublelinkedlist{
+		Eq: eq,
+	}
 }
 
-func createNode(a *Object) *node {
+func createNode(a interface{}) *node {
 	if a == nil {
 		return nil
 	}
 	return &node{
-		value: a,
+		Value: a,
 	}
 }
 
 func eq(n1 *node, n2 *node) bool {
-	var obj1 *Object = n1.value
-	var obj2 *Object = n2.value
-	return bytes.Equal(obj1.GetBuffer(), obj2.GetBuffer())
+	return n1.Value == n2.Value
 }
 
 func (self *doublelinkedlist) findNodeByIndex(i int) *node {
 	var index int = 0
-	for node := self.head; node != nil; node = node.next {
+	for node := self.Head; node != nil; node = node.Next {
 		if i == index {
 			return node
 		}
@@ -65,119 +70,135 @@ func (self *doublelinkedlist) findNodeByIndex(i int) *node {
 	return nil
 }
 
+func (self *doublelinkedlist) GetFirstNode() *node {
+	return self.Head
+}
+
+func (self *doublelinkedlist) GetTailNode() *node {
+	return self.Tail
+}
+
 func (self *doublelinkedlist) findNodeByNode(n *node) *node {
-	for node := self.head; node != nil; node = node.next {
-		if eq(node, n) {
+	for node := self.Head; node != nil; node = node.Next {
+		if self.Eq(node, n) {
 			return node
 		}
 	}
 	return nil
 }
 
-func (self *doublelinkedlist) Lput(a *Object) {
+func (self *doublelinkedlist) Lput(a interface{}) {
 	node := createNode(a)
 	if node == nil {
 		return
 	}
 	if self.n > 0 {
-		node.next = self.head
-		node.prev = nil
-		self.head.prev = node
-		self.head = node
+		node.Next = self.Head
+		node.Prev = nil
+		self.Head.Prev = node
+		self.Head = node
 	} else {
-		self.head = node
-		self.tail = node
-		node.prev = nil
-		node.next = nil
+		self.Head = node
+		self.Tail = node
+		node.Prev = nil
+		node.Next = nil
 	}
 	self.n++
 }
 
-func (self *doublelinkedlist) Rput(a *Object) {
+func (self *doublelinkedlist) Rput(a interface{}) {
 	node := createNode(a)
 	if self.n > 0 {
-		node.prev = self.tail
-		node.next = nil
-		self.tail.next = node
-		self.tail = node
+		node.Prev = self.Tail
+		node.Next = nil
+		self.Tail.Next = node
+		self.Tail = node
 	} else {
-		self.head = node
-		self.tail = node
-		node.prev = nil
-		node.next = nil
+		self.Head = node
+		self.Tail = node
+		node.Prev = nil
+		node.Next = nil
 	}
 	self.n++
 }
 
-func (self *doublelinkedlist) Index(a *Object) int {
+func (self *doublelinkedlist) Put(a interface{}) {
+	self.Rput(a)
+}
+
+func (self *doublelinkedlist) Pop() interface{} {
+	return self.Lpop()
+}
+
+func (self *doublelinkedlist) Index(a interface{}) int {
 	index := -1
 	witchnode := createNode(a)
-	for node := self.head; node != nil; node = node.next {
+	for node := self.Head; node != nil; node = node.Next {
 		index++
-		if eq(node, witchnode) {
+		if self.Eq(node, witchnode) {
 			return index
 		}
 	}
 	return -1
 }
 
-func (l *doublelinkedlist) Get(i int) *Object {
-	return l.findNodeByIndex(i).value
+func (l *doublelinkedlist) Get(i int) interface{} {
+	return l.findNodeByIndex(i).Value
 }
 
-func (self *doublelinkedlist) Lpop() *Object {
+func (self *doublelinkedlist) Lpop() interface{} {
 	if self.n == 0 {
 		return nil
 	}
-	node := self.head
+	node := self.Head
 	self.n--
 	if self.n > 0 {
-		self.head = node.next
-		self.head.prev = nil
+		self.Head = node.Next
+		self.Head.Prev = nil
 	} else {
-		self.head = nil
-		self.tail = nil
+		self.Head = nil
+		self.Tail = nil
 	}
-	node.next = nil
-	node.prev = nil
-	return node.value
+	node.Next = nil
+	node.Prev = nil
+	return node.Value
 }
 
-func (self *doublelinkedlist) Rpop() *Object {
+func (self *doublelinkedlist) Rpop() interface{} {
 	if self.n == 0 {
 		return nil
 	}
-	node := self.tail
+	node := self.Tail
 	self.n--
 	if self.n > 0 {
-		self.tail = node.prev
-		self.tail.next = nil
+		self.Tail = node.Prev
+		self.Tail.Next = nil
 	} else {
-		self.tail = nil
-		self.head = nil
+		self.Tail = nil
+		self.Head = nil
 	}
-	node.next = nil
-	node.prev = nil
-	return node.value
+	node.Next = nil
+	node.Prev = nil
+	return node.Value
 }
 
-func (self *doublelinkedlist) Remove(a *Object) {
+func (self *doublelinkedlist) Remove(a interface{}) {
 	node := self.findNodeByNode(createNode(a))
 	if node == nil {
 		return
 	}
-	if node.prev != nil {
-		node.prev.next = node.next
+	if node.Prev != nil {
+		node.Prev.Next = node.Next
 	} else {
-		self.head = node.next
+		self.Head = node.Next
 	}
-	if node.next != nil {
-		node.next.prev = node.prev
+	if node.Next != nil {
+		node.Next.Prev = node.Prev
 	} else {
-		self.tail = node.prev
+		self.Tail = node.Prev
 	}
-	if node.value != nil {
-		node.value = nil
+	if node.Value != nil {
+		node.Value = nil
 	}
 	self.n--
 }
@@ -186,7 +207,7 @@ func (l *doublelinkedlist) Len() int {
 	return l.n
 }
 
-func (l *doublelinkedlist) Insert(p, i int, a *Object) {
+func (l *doublelinkedlist) Insert(p, i int, a interface{}) {
 	if p != After && p != Before {
 		return
 	}
@@ -200,29 +221,47 @@ func (l *doublelinkedlist) Insert(p, i int, a *Object) {
 		return
 	}
 	if p == After {
-		newnode.prev = node
-		newnode.next = node.next
-		if node.next == nil {
-			l.tail = newnode
+		newnode.Prev = node
+		newnode.Next = node.Next
+		if node.Next == nil {
+			l.Tail = newnode
 		} else {
-			node.next.prev = newnode
+			node.Next.Prev = newnode
 		}
-		node.next = newnode
+		node.Next = newnode
 	} else if p == Before {
-		newnode.prev = node.prev
-		newnode.next = node
-		if node.prev == nil {
-			l.head = newnode
+		newnode.Prev = node.Prev
+		newnode.Next = node
+		if node.Prev == nil {
+			l.Head = newnode
 		} else {
-			node.prev.next = newnode
+			node.Prev.Next = newnode
 		}
-		node.prev = newnode
+		node.Prev = newnode
 	}
 	l.n++
 }
 
 func (l *doublelinkedlist) Clear() {
 	l.n = 0
-	l.head = nil
-	l.tail = nil
+	l.Head = nil
+	l.Tail = nil
+}
+
+func (self *doublelinkedlist) SubList(fromIndex int, toIndex int) List {
+	if fromIndex < 0 || fromIndex >= toIndex || toIndex < 0 {
+		return nil
+	}
+	list := NewList()
+	var index int
+	for node := self.Head; node != nil; node = node.Next {
+		if index >= fromIndex {
+			list.Put(node.Value)
+		}
+		index++
+		if index == toIndex {
+			break
+		}
+	}
+	return list
 }

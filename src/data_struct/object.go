@@ -1,10 +1,11 @@
-package godis
+package data_struct
 
 import (
 	"sync"
 )
 
 const (
+	NonTs = 0
 	// 字符串类型对象
 	STRING = 1
 	// 列表类型对象
@@ -20,7 +21,7 @@ const (
 )
 
 type Object struct {
-	objType   int
+	objType   uint8
 	objBuffer []byte
 	Hash      map[string]*Object
 	List      List
@@ -60,7 +61,7 @@ func CreateListObject(tsid uint64) *Object {
 	}
 }
 
-func (o *Object) GetObjectType() int {
+func (o *Object) GetObjectType() uint8 {
 	return o.objType
 }
 

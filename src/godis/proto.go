@@ -1,7 +1,6 @@
 package godis
 
 import (
-	golist "container/list"
 	ds "data_struct"
 	"encoding/binary"
 	"errors"
@@ -20,6 +19,8 @@ const (
 	cmd_pop
 	cmd_begin
 	cmd_rollback
+	cmd_savepoint
+	cmd_rollbackto
 	cmd_commit
 )
 
@@ -31,10 +32,9 @@ var (
 	err_db_not_found      = errors.New("[error] db not found!")
 	err_cmd_args_too_long = errors.New("[error] cmd args too long!")
 	err_cmd_arg_too_large = errors.New("[error] cmd args too large!")
-	err_no_start_ts       = errors.New("[error] no open transaction!")
 )
 
-func reply(c *Client, msg string, result *golist.List) {
+func reply(c *Client, msg string, result ds.List) {
 	defer c.W.Flush()
 	var resultN int32
 	if result == nil {
@@ -70,7 +70,7 @@ func reply(c *Client, msg string, result *golist.List) {
 	var objlen uint64
 	var obj *ds.Object
 	var ok bool
-	for e := result.Front(); e != nil; e = e.Next() {
+	for e := result.GetFirstNode(); e != nil; e = e.Next {
 		if obj, ok = e.Value.(*ds.Object); !ok {
 			continue
 		}
@@ -138,7 +138,7 @@ func parseCmd(c *Client) (uint8, error) {
 
 func Process(c *Client) {
 	defer func() {
-		c.ts.RollBack()
+		c.ts.RollBack(-1)
 		c.Cancel()
 	}()
 	for {
@@ -168,6 +168,11 @@ func Process(c *Client) {
 			cmdSget(c)
 		case cmd_rollback:
 			cmdRollBack(c)
+			continue
+		case cmd_savepoint:
+			cmdSavePoint(c)
+		case cmd_rollbackto:
+			cmdRollBackTo(c)
 			continue
 		case cmd_commit:
 			log.Println("手动提交事务")

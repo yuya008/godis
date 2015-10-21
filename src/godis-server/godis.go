@@ -33,6 +33,7 @@ func parseArgs() *goconf.Config {
 func main() {
 	log.Println("初始化godis")
 	godis_ptr := godis.InitGodis()
-	godis.InitServer(godis_ptr, parseArgs())
+	ser := parseArgs().Get("server")
+	godis.InitServer(godis_ptr, ser)
 	godis.StartServer(godis_ptr)
 }

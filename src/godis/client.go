@@ -2,8 +2,10 @@ package godis
 
 import (
 	"bufio"
+	"db"
 	"log"
 	"net"
+	"sync/atomic"
 )
 
 const (
@@ -16,7 +18,7 @@ const (
 type Client struct {
 	net.Conn
 	godis      *Godis
-	CurDB      *DB
+	CurDB      *db.DB
 	AutoCommit bool
 	CmdError   bool
 	R          *bufio.Reader
@@ -34,18 +36,12 @@ func NewClient(c net.Conn, godis *Godis) *Client {
 	cli.W = bufio.NewWriter(c)
 	cli.CmdError = false
 	log.Println("创建一个客户端", cli)
+	atomic.AddUint64(&godis.CurrentClientsN, 1)
 	return cli
 }
 
 func (c *Client) Cancel() {
 	c.Conn.Close()
+	atomic.AddUint64(&c.godis.CurrentClientsN, ^uint64(0))
 	log.Println("注销一个客户端")
-}
-
-func (c *Client) ReplyBytes(data []byte) (int, error) {
-	return c.Conn.Write(data)
-}
-
-func (c *Client) ReplyString(data string) (int, error) {
-	return c.Conn.Write([]byte(data))
 }
