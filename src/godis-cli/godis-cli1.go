@@ -67,9 +67,23 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	fmt.Println("keys")
-	conn.Write(warp(cmd_keys, nil))
+	args := make([]string, 4)
+	args[0] = "A"
+	args[1] = "a"
+	args[2] = "B"
+	args[3] = "b"
+	conn.Write(warp(cmd_sset, args))
 	result2 := readData(conn)
+	fmt.Println(result2)
+	fmt.Println(string(result2))
+
+	args = make([]string, 4)
+	args[0] = "C"
+	args[1] = "c"
+	args[2] = "D"
+	args[3] = "d"
+	conn.Write(warp(cmd_sset, args))
+	result2 = readData(conn)
 	fmt.Println(result2)
 	fmt.Println(string(result2))
 }

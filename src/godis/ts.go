@@ -5,6 +5,7 @@ import (
 	"db"
 	"errors"
 	"log"
+	"store"
 	"sync/atomic"
 	"time"
 )
@@ -38,6 +39,7 @@ type Ts struct {
 	// magicHT *HashTable
 	// magicHT *List
 	curSavePoint int
+	datalog      *store.DataLog
 }
 
 type TsRecord struct {
@@ -61,6 +63,7 @@ func NewTs(godis *Godis) *Ts {
 		timeout: godis.Tstimeout,
 		tsrList: ds.NewList(),
 		magicDB: make(map[string]*ds.Object),
+		datalog: godis.Dl,
 	}
 }
 
@@ -82,25 +85,26 @@ func (ts *Ts) RlockDB(db *db.DB) bool {
 }
 
 func (ts *Ts) LockDB(db *db.DB) bool {
+	log.Println("LockDB", db.Lock)
 	return db.Lock.TryLock(ts.timeout, ts.TsId)
 }
 
 func (ts *Ts) GetDBKeys(db *db.DB) ds.List {
 	list := ds.NewList()
 	for key, _ := range db.Data {
-		list.Put(ds.CreateObject([]byte(key), ts.TsId))
+		list.Put(ds.CreateObject([]byte(key), ds.BIN, ts.TsId))
 	}
 	for key, _ := range ts.magicDB {
-		list.Put(ds.CreateObject([]byte(key), ts.TsId))
+		list.Put(ds.CreateObject([]byte(key), ds.BIN, ts.TsId))
 	}
 	return list
 }
-func (ts *Ts) SetDBKey(db *db.DB, key string, value []byte) {
+func (ts *Ts) SetDBKey(db *db.DB, t uint8, key string, value []byte) {
 	tsr := NewTsRecord(AddDbKey)
 	tsr.Key = key
 	tsr.Dbptr = db
 	ts.AddTsRecord(tsr)
-	ts.magicDB[key] = ds.CreateObject(value, ts.TsId)
+	ts.magicDB[key] = ds.CreateObject(value, t, ts.TsId)
 }
 func (ts *Ts) DeleteDBKey(db *db.DB, key string) {
 	tsr := NewTsRecord(DeleteDbKey)
@@ -245,7 +249,11 @@ func rollbackDbDel(ts *Ts, db *db.DB, key string) {
 }
 
 func commitDbDel(ts *Ts, db *db.DB, key string) {
-	delete(ts.magicDB, key)
+	obj, ok := ts.magicDB[key]
+	if ok {
+		ts.datalog.PutKeyValue(db, key, store.Del, obj)
+		delete(ts.magicDB, key)
+	}
 }
 
 func rollbackDbAdd(ts *Ts, db *db.DB, key string) {
@@ -256,6 +264,7 @@ func commitDbAdd(ts *Ts, db *db.DB, key string) {
 	obj, ok := ts.magicDB[key]
 	log.Println("Obj", obj, ok)
 	if ok {
+		ts.datalog.PutKeyValue(db, key, store.None, obj)
 		db.SetDbKey(key, obj)
 	}
 }

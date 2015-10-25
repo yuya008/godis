@@ -96,7 +96,7 @@ func cmdSset(c *Client) {
 		return
 	}
 	for i := 0; i < len(args); i++ {
-		c.ts.SetDBKey(c.CurDB, string(args[i]), args[i+1])
+		c.ts.SetDBKey(c.CurDB, ds.STRING, string(args[i]), args[i+1])
 		i++
 	}
 	reply(c, success, nil)

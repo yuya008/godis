@@ -37,10 +37,10 @@ func CreateStringObject(data []byte, tsid uint64) *Object {
 	}
 }
 
-func CreateObject(data []byte, tsid uint64) *Object {
+func CreateObject(data []byte, t uint8, tsid uint64) *Object {
 	return &Object{
 		objBuffer: data,
-		objType:   BIN,
+		objType:   t,
 		tsid:      tsid,
 	}
 }

@@ -113,6 +113,9 @@ func getArgs(c *Client) ([][]byte, error) {
 		if err != nil {
 			return nil, err_cmd_read
 		}
+		if arglen <= 0 {
+			return nil, err_cmd
+		}
 		nowarglen += arglen
 		if nowarglen > c.godis.Cmdargsize {
 			return nil, err_cmd_arg_too_large
