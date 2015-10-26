@@ -37,6 +37,8 @@ type Godis struct {
 	Tstimeout time.Duration
 	// 数据持久化
 	Dl *store.DataLog
+	// 事务日志
+	Tl *store.TsLog
 }
 
 var err_max_client = errors.New("[error] clients reached the limit!")
@@ -83,6 +85,12 @@ func InitServer(godis *Godis, ser *goconf.Section) {
 		}
 		godis.Dl.LoadDiskData(godis.Dbs)
 		godis.Dl.StartDataWriteThread()
+		godis.Tl, err = store.NewTsLog(ser)
+		if err != nil {
+			log.Fatalln(err)
+		}
+	} else {
+		log.Fatalln("Please configure dataDir!")
 	}
 }
 

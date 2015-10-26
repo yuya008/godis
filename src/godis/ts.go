@@ -40,6 +40,7 @@ type Ts struct {
 	// magicHT *List
 	curSavePoint int
 	datalog      *store.DataLog
+	tsLog        *store.TsLog
 }
 
 type TsRecord struct {
@@ -64,6 +65,7 @@ func NewTs(godis *Godis) *Ts {
 		tsrList: ds.NewList(),
 		magicDB: make(map[string]*ds.Object),
 		datalog: godis.Dl,
+		tsLog:   godis.Tl,
 	}
 }
 
@@ -228,6 +230,8 @@ func rollBackATsr(ts *Ts, tsr *TsRecord) {
 		rollbackDbDel(ts, tsr.Dbptr, tsr.Key)
 	case AddDbKey:
 		rollbackDbAdd(ts, tsr.Dbptr, tsr.Key)
+	case SavePoint:
+		ts.curSavePoint--
 	}
 }
 
