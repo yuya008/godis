@@ -26,16 +26,16 @@ func InitDB(id uint16, db *DB) {
 	db.Lock = tslock.NewTsLock()
 }
 
-func (db *DB) DeleteKey(key string) {
-	delete(db.Data, key)
+func (db *DB) DeleteKey(key []byte) {
+	delete(db.Data, string(key))
 }
 
-func (db *DB) SetDbKey(key string, obj *ds.Object) {
-	db.Data[key] = obj
+func (db *DB) SetDbKey(key []byte, obj *ds.Object) {
+	db.Data[string(key)] = obj
 }
 
-func (db *DB) GetDbKey(key string) *ds.Object {
-	obj, ok := db.Data[key]
+func (db *DB) GetDbKey(key []byte) *ds.Object {
+	obj, ok := db.Data[string(key)]
 	if ok {
 		return obj
 	}

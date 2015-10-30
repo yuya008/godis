@@ -74,7 +74,7 @@ func cmdDel(c *Client) {
 		return
 	}
 	for _, arg := range args {
-		c.ts.DeleteDBKey(c.CurDB, string(arg))
+		c.ts.DeleteDBKey(c.CurDB, arg)
 	}
 	reply(c, success, nil)
 }
@@ -96,7 +96,7 @@ func cmdSset(c *Client) {
 		return
 	}
 	for i := 0; i < len(args); i++ {
-		c.ts.SetDBKey(c.CurDB, ds.STRING, string(args[i]), args[i+1])
+		c.ts.SetDBKey(c.CurDB, ds.STRING, args[i], args[i+1])
 		i++
 	}
 	reply(c, success, nil)
@@ -114,7 +114,7 @@ func cmdSget(c *Client) {
 	}
 	list := ds.NewList()
 	for _, key := range args {
-		obj := c.ts.GetDBKey(c.CurDB, string(key))
+		obj := c.ts.GetDBKey(c.CurDB, key)
 		if obj != nil {
 			list.Put(obj)
 		}

@@ -9,8 +9,10 @@ import (
 	"github.com/Terry-Mao/goconf"
 	"log"
 	"os"
+	"path"
 	"sync"
 	"time"
+	"utils"
 )
 
 /*
@@ -36,8 +38,8 @@ var (
 
 type dataRecord struct {
 	witchdb    uint16
-	key0       string
-	key1       string
+	key0       []byte
+	key1       []byte
 	objectType uint8
 	op         int8
 	objectData []byte
@@ -97,17 +99,17 @@ func NewDataLog(sec *goconf.Section) (*DataLog, error) {
 }
 
 func (dl *DataLog) GetDataFilePath(i int) string {
-	return fmt.Sprintf("%s/%s", dl.Datadir, fmt.Sprintf(DataFilePrefix, i))
+	return path.Join(dl.Datadir, fmt.Sprintf(DataFilePrefix, i))
 }
 
-func (dl *DataLog) PutKeyValue(db *db.DB, key string, op int8, obj *ds.Object) {
-	dl.PutKeyKeyValue(db, key, "", op, obj)
+func (dl *DataLog) PutKeyValue(db *db.DB, key []byte, op int8, obj *ds.Object) {
+	dl.PutKeyKeyValue(db, key, nil, op, obj)
 }
 
 func (dl *DataLog) PutKeyKeyValue(
 	db *db.DB,
-	key0 string,
-	key1 string,
+	key0 []byte,
+	key1 []byte,
 	op int8, obj *ds.Object) {
 	var newBuffer []byte
 	if op == None {
@@ -147,7 +149,7 @@ func (dl *DataLog) switchDataFile() {
 	}
 }
 
-func (dl *DataLog) writeAkey(f *os.File, key string) {
+func (dl *DataLog) writeAkey(f *os.File, key []byte) {
 	var keylen uint64 = uint64(len(key))
 	err := binary.Write(f, binary.BigEndian, keylen)
 	if err != nil {
@@ -155,7 +157,7 @@ func (dl *DataLog) writeAkey(f *os.File, key string) {
 	}
 	log.Println("writeAkey keylen", keylen)
 	log.Println("writeAkey key", key)
-	_, err = f.Write([]byte(key))
+	_, err = f.Write(key)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -191,7 +193,7 @@ func (dl *DataLog) writeThread() {
 		log.Println("writeThread op", dr.op)
 		if dr.op == None {
 			var valuelen uint64 = uint64(len(dr.objectData))
-			if dr.key1 == "" {
+			if dr.key1 == nil {
 				dl.writeAkey(dl.CurFile, dr.key0)
 				dl.writeKeyStatus(dl.CurFile, None)
 				err = binary.Write(dl.CurFile, binary.BigEndian, valuelen)
@@ -217,7 +219,7 @@ func (dl *DataLog) writeThread() {
 				}
 			}
 		} else {
-			if dr.key1 == "" {
+			if dr.key1 == nil {
 				dl.writeAkey(dl.CurFile, dr.key0)
 				dl.writeKeyStatus(dl.CurFile, Del)
 			} else {
@@ -283,7 +285,7 @@ func loadAStringObject(reader *os.File, witchdb uint16, dbs []db.DB) int64 {
 	curSize += 1
 	switch op {
 	case Del:
-		db.DeleteKey(string(keybuf))
+		db.DeleteKey(keybuf)
 		return curSize
 	case None:
 	default:
@@ -306,7 +308,7 @@ func loadAStringObject(reader *os.File, witchdb uint16, dbs []db.DB) int64 {
 		log.Fatalln(Err_data_format_fail)
 	}
 	curSize += int64(valuelen)
-	db.SetDbKey(string(keybuf), ds.CreateStringObject(valuebuf, ds.NonTs))
+	db.SetDbKey(keybuf, ds.CreateStringObject(valuebuf, ds.NonTs))
 	return curSize
 }
 
@@ -374,22 +376,7 @@ func (dl *DataLog) scanLogFile() error {
 	if err != nil {
 		return err
 	}
-	var (
-		fileN      int
-		firstfound bool = true
-	)
-	for _, file := range files {
-		_, err = fmt.Sscanf(file, DataFilePrefix, &fileN)
-		if err != nil {
-			continue
-		}
-		if fileN > dl.CurMaxFileNo {
-			dl.CurMaxFileNo = fileN
-		} else if firstfound || fileN < dl.CurMinFileNo {
-			dl.CurMinFileNo = fileN
-			firstfound = false
-		}
-	}
+	dl.CurMaxFileNo, dl.CurMinFileNo = utils.FindFileNMaxAndMin(files, DataFilePrefix)
 	dl.CurFile, err = os.OpenFile(dl.GetDataFilePath(dl.CurMaxFileNo),
 		os.O_RDWR|os.O_CREATE, 0700)
 	if err != nil {

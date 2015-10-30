@@ -89,6 +89,7 @@ func InitServer(godis *Godis, ser *goconf.Section) {
 		if err != nil {
 			log.Fatalln(err)
 		}
+		godis.Tl.Load()
 	} else {
 		log.Fatalln("Please configure dataDir!")
 	}

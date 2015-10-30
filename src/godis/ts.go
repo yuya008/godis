@@ -17,6 +17,11 @@ const (
 	Lookup
 	SavePoint
 )
+const (
+	NotCommit = iota
+	Commit
+	Committed
+)
 
 var (
 	err_ts_lock_timeout     = errors.New("[error] lock object timeout")
@@ -41,15 +46,18 @@ type Ts struct {
 	curSavePoint int
 	datalog      *store.DataLog
 	tsLog        *store.TsLog
+	status       uint8
+	offset       *store.RecordPosition
 }
 
 type TsRecord struct {
 	TsrId       int
 	SavePointId int
 	Op          uint8
-	Key         string
+	Key         []byte
 	Value       []byte
 	Dbptr       *db.DB
+	Offset      *store.RecordPosition
 }
 
 func NewTsRecord(op uint8) *TsRecord {
@@ -101,61 +109,102 @@ func (ts *Ts) GetDBKeys(db *db.DB) ds.List {
 	}
 	return list
 }
-func (ts *Ts) SetDBKey(db *db.DB, t uint8, key string, value []byte) {
+func (ts *Ts) SetDBKey(db *db.DB, t uint8, key []byte, value []byte) {
+	var err error
 	tsr := NewTsRecord(AddDbKey)
+	if origObj := db.GetDbKey(key); origObj != nil {
+		tsr.Offset = ts.tsLog.Put(db, origObj.GetObjectType(), key, value)
+		if tsr.Offset == nil {
+			log.Fatalln(err)
+		}
+	}
 	tsr.Key = key
 	tsr.Dbptr = db
 	ts.AddTsRecord(tsr)
-	ts.magicDB[key] = ds.CreateObject(value, t, ts.TsId)
+	ts.setMagicDb(key, ds.CreateObject(value, t, ts.TsId))
 }
-func (ts *Ts) DeleteDBKey(db *db.DB, key string) {
+func (ts *Ts) DeleteDBKey(db *db.DB, key []byte) {
+	var err error
 	tsr := NewTsRecord(DeleteDbKey)
 	tsr.Key = key
 	tsr.Dbptr = db
+	if origObj := db.GetDbKey(key); origObj != nil {
+		tsr.Offset = ts.tsLog.Put(db, origObj.GetObjectType(), key,
+			origObj.GetBuffer())
+		if tsr.Offset == nil {
+			log.Fatalln(err)
+		}
+	}
 	ts.AddTsRecord(tsr)
-
-	obj, ok := ts.magicDB[key]
-	if ok {
-		delete(ts.magicDB, key)
+	obj := ts.getMagicDb(key)
+	if obj != nil {
+		ts.delMagicDb(key)
 	} else {
 		obj = db.GetDbKey(key)
 		if obj != nil {
-			ts.magicDB[key] = obj
+			ts.setMagicDb(key, obj)
 			db.DeleteKey(key)
 		}
 	}
 }
 
-func (ts *Ts) GetDBKey(db *db.DB, name string) *ds.Object {
-	if obj := db.GetDbKey(name); obj != nil {
+func (ts *Ts) GetDBKey(db *db.DB, key []byte) *ds.Object {
+	if obj := db.GetDbKey(key); obj != nil {
 		return obj
 	} else {
-		obj, ok := ts.magicDB[name]
-		if ok {
+		obj := ts.getMagicDb(key)
+		if obj != nil {
 			return obj
 		}
 	}
 	return nil
 }
 
-func (ts *Ts) Commit() error {
+func (ts *Ts) doCommit() {
+	var (
+		tsr *TsRecord
+		ok  bool
+	)
+	for e := ts.tsrList.GetFirstNode(); e != nil; e = e.Next {
+		if tsr, ok = e.Value.(*TsRecord); !ok {
+			continue
+		}
+		ts.commitATsr(tsr)
+		if tsr.Dbptr != nil {
+			tsr.Dbptr.Lock.Cancel()
+		}
+	}
+}
+
+func (ts *Ts) storeTsr() {
 	var tsr *TsRecord
 	var ok bool
+	list := ds.NewList()
+	for e := ts.tsrList.GetFirstNode(); e != nil; e = e.Next {
+		if tsr, ok = e.Value.(*TsRecord); !ok {
+			continue
+		}
+		if tsr.Offset != nil {
+			list.Put(tsr.Offset)
+		}
+	}
+	ts.offset = ts.tsLog.PutAMeta(Commit, ts.TsId, list)
+	if ts.offset == nil {
+		log.Fatalln("PutAMeta()")
+	}
+}
+
+func (ts *Ts) Commit() error {
 	log.Println("tsr Len()", ts.tsrList.Len())
 	if ts.tsrList.Len() == 0 {
 		return err_not_found_ts
 	}
 	log.Println("开始commmit")
 	printTsrArray(ts.tsrList)
-	for e := ts.tsrList.GetFirstNode(); e != nil; e = e.Next {
-		if tsr, ok = e.Value.(*TsRecord); !ok {
-			continue
-		}
-		commitATsr(ts, tsr)
-		if tsr.Dbptr != nil {
-			tsr.Dbptr.Lock.Cancel()
-		}
-	}
+	// 保存事务日志
+	ts.storeTsr()
+	// 开始提交
+	ts.doCommit()
 	return nil
 }
 
@@ -172,10 +221,11 @@ func printTsrArray(tsrList ds.List) {
 	log.Println("----------------")
 }
 
-func subTsrListBySavePoint(l ds.List, savepoint int) ds.List {
+func (ts *Ts) subTsrListBySavePoint(savepoint int) ds.List {
 	var i int = 0
 	var tsr *TsRecord
 	var ok bool
+	var l ds.List = ts.tsrList
 	for e := l.GetFirstNode(); e != nil; e = e.Next {
 		if tsr, ok = e.Value.(*TsRecord); !ok {
 			continue
@@ -206,7 +256,7 @@ func (ts *Ts) RollBack(savepoint int) error {
 	}
 	printTsrArray(ts.tsrList)
 	if savepoint >= 0 {
-		rollbacklist = subTsrListBySavePoint(ts.tsrList, savepoint)
+		rollbacklist = ts.subTsrListBySavePoint(savepoint)
 	} else {
 		rollbacklist = ts.tsrList
 	}
@@ -216,7 +266,7 @@ func (ts *Ts) RollBack(savepoint int) error {
 		if tsr, ok = e.Value.(*TsRecord); !ok {
 			continue
 		}
-		rollBackATsr(ts, tsr)
+		ts.rollBackATsr(tsr)
 		if tsr.Dbptr != nil {
 			tsr.Dbptr.Lock.Cancel()
 		}
@@ -224,51 +274,69 @@ func (ts *Ts) RollBack(savepoint int) error {
 	return nil
 }
 
-func rollBackATsr(ts *Ts, tsr *TsRecord) {
+func (ts *Ts) rollBackATsr(tsr *TsRecord) {
 	switch tsr.Op {
 	case DeleteDbKey:
-		rollbackDbDel(ts, tsr.Dbptr, tsr.Key)
+		ts.rollbackDbDel(tsr.Dbptr, tsr.Key)
 	case AddDbKey:
-		rollbackDbAdd(ts, tsr.Dbptr, tsr.Key)
+		ts.rollbackDbAdd(tsr.Dbptr, tsr.Key)
 	case SavePoint:
 		ts.curSavePoint--
 	}
 }
 
-func commitATsr(ts *Ts, tsr *TsRecord) {
+func (ts *Ts) commitATsr(tsr *TsRecord) {
 	switch tsr.Op {
 	case DeleteDbKey:
-		commitDbDel(ts, tsr.Dbptr, tsr.Key)
+		ts.commitDbDel(tsr.Dbptr, tsr.Key)
 	case AddDbKey:
-		commitDbAdd(ts, tsr.Dbptr, tsr.Key)
+		ts.commitDbAdd(tsr.Dbptr, tsr.Key)
 	}
 }
 
-func rollbackDbDel(ts *Ts, db *db.DB, key string) {
-	obj, ok := ts.magicDB[key]
-	if ok {
+func (ts *Ts) rollbackDbDel(db *db.DB, key []byte) {
+	obj := ts.getMagicDb(key)
+	if obj != nil {
 		db.SetDbKey(key, obj)
 	}
-	delete(ts.magicDB, key)
+	ts.delMagicDb(key)
 }
 
-func commitDbDel(ts *Ts, db *db.DB, key string) {
-	obj, ok := ts.magicDB[key]
-	if ok {
+func (ts *Ts) commitDbDel(db *db.DB, key []byte) {
+	obj := ts.getMagicDb(key)
+	if obj != nil {
 		ts.datalog.PutKeyValue(db, key, store.Del, obj)
-		delete(ts.magicDB, key)
+		delete(ts.magicDB, string(key))
 	}
 }
 
-func rollbackDbAdd(ts *Ts, db *db.DB, key string) {
-	delete(ts.magicDB, key)
+func (ts *Ts) rollbackDbAdd(db *db.DB, key []byte) {
+	ts.delMagicDb(key)
 }
 
-func commitDbAdd(ts *Ts, db *db.DB, key string) {
-	obj, ok := ts.magicDB[key]
-	log.Println("Obj", obj, ok)
-	if ok {
+func (ts *Ts) commitDbAdd(db *db.DB, key []byte) {
+	obj := ts.getMagicDb(key)
+	log.Println("Obj", obj)
+	if obj != nil {
 		ts.datalog.PutKeyValue(db, key, store.None, obj)
 		db.SetDbKey(key, obj)
 	}
+}
+
+func (ts *Ts) setMagicDb(key []byte, value *ds.Object) {
+	ts.magicDB[string(key)] = value
+}
+
+func (ts *Ts) getMagicDb(key []byte) *ds.Object {
+	obj, ok := ts.magicDB[string(key)]
+	if ok {
+		return obj
+	}
+	return nil
+}
+
+func (ts *Ts) delMagicDb(key []byte) *ds.Object {
+	obj := ts.getMagicDb(key)
+	delete(ts.magicDB, string(key))
+	return obj
 }
