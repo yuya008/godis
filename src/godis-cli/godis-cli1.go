@@ -21,6 +21,7 @@ const (
 	cmd_pop
 	cmd_begin
 	cmd_rollback
+	cmd_savepoint
 	cmd_rollbackto
 	cmd_commit
 )
@@ -67,22 +68,22 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	args := make([]string, 4)
-	args[0] = "A"
-	args[1] = "a"
-	args[2] = "B"
-	args[3] = "b"
-	conn.Write(warp(cmd_sset, args))
+	log.Println("begin")
+	conn.Write(warp(cmd_begin, nil))
 	result2 := readData(conn)
 	fmt.Println(result2)
 	fmt.Println(string(result2))
 
-	args = make([]string, 4)
-	args[0] = "C"
-	args[1] = "c"
-	args[2] = "D"
-	args[3] = "d"
+	args := make([]string, 2)
+	args[0] = "B"
+	args[1] = "WWWWWWW"
 	conn.Write(warp(cmd_sset, args))
+	result2 = readData(conn)
+	fmt.Println(result2)
+	fmt.Println(string(result2))
+
+	log.Println("commit")
+	conn.Write(warp(cmd_commit, nil))
 	result2 = readData(conn)
 	fmt.Println(result2)
 	fmt.Println(string(result2))

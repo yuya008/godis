@@ -285,7 +285,7 @@ func loadAStringObject(reader *os.File, witchdb uint16, dbs []db.DB) int64 {
 	curSize += 1
 	switch op {
 	case Del:
-		db.DeleteKey(keybuf)
+		db.DeleteDbObj(keybuf)
 		return curSize
 	case None:
 	default:
@@ -308,7 +308,7 @@ func loadAStringObject(reader *os.File, witchdb uint16, dbs []db.DB) int64 {
 		log.Fatalln(Err_data_format_fail)
 	}
 	curSize += int64(valuelen)
-	db.SetDbKey(keybuf, ds.CreateStringObject(valuebuf, ds.NonTs))
+	db.SetDbObj(keybuf, ds.CreateStringObject(valuebuf, ds.NonTs))
 	return curSize
 }
 

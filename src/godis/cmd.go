@@ -70,6 +70,7 @@ func cmdDel(c *Client) {
 	}
 	args, err := getArgs(c)
 	if err != nil {
+		c.ts.UnLockDB(c.CurDB)
 		reply(c, err.Error(), nil)
 		return
 	}
@@ -88,10 +89,12 @@ func cmdSset(c *Client) {
 	log.Println("数据库加锁成功")
 	args, err := getArgs(c)
 	if err != nil {
+		c.ts.UnLockDB(c.CurDB)
 		reply(c, err.Error(), nil)
 		return
 	}
 	if len(args)%2 != 0 {
+		c.ts.UnLockDB(c.CurDB)
 		reply(c, err_cmd.Error(), nil)
 		return
 	}
@@ -107,6 +110,7 @@ func cmdSget(c *Client) {
 		reply(c, err_ts_lock_timeout.Error(), nil)
 		return
 	}
+	defer c.ts.UnLockDB(c.CurDB)
 	args, err := getArgs(c)
 	if err != nil {
 		reply(c, err.Error(), nil)

@@ -17,11 +17,6 @@ const (
 	Lookup
 	SavePoint
 )
-const (
-	NotCommit = iota
-	Commit
-	Committed
-)
 
 var (
 	err_ts_lock_timeout     = errors.New("[error] lock object timeout")
@@ -47,7 +42,7 @@ type Ts struct {
 	datalog      *store.DataLog
 	tsLog        *store.TsLog
 	status       uint8
-	offset       *store.RecordPosition
+	position     *store.RecordPosition
 }
 
 type TsRecord struct {
@@ -57,7 +52,7 @@ type TsRecord struct {
 	Key         []byte
 	Value       []byte
 	Dbptr       *db.DB
-	Offset      *store.RecordPosition
+	Position    *store.RecordPosition
 }
 
 func NewTsRecord(op uint8) *TsRecord {
@@ -99,6 +94,10 @@ func (ts *Ts) LockDB(db *db.DB) bool {
 	return db.Lock.TryLock(ts.timeout, ts.TsId)
 }
 
+func (ts *Ts) UnLockDB(db *db.DB) {
+	db.Lock.Cancel()
+}
+
 func (ts *Ts) GetDBKeys(db *db.DB) ds.List {
 	list := ds.NewList()
 	for key, _ := range db.Data {
@@ -112,10 +111,12 @@ func (ts *Ts) GetDBKeys(db *db.DB) ds.List {
 func (ts *Ts) SetDBKey(db *db.DB, t uint8, key []byte, value []byte) {
 	var err error
 	tsr := NewTsRecord(AddDbKey)
-	if origObj := db.GetDbKey(key); origObj != nil {
-		tsr.Offset = ts.tsLog.Put(db, origObj.GetObjectType(), key, value)
-		if tsr.Offset == nil {
-			log.Fatalln(err)
+	if origObj := db.GetDbObj(key); origObj != nil {
+		log.Println("SetDBKey() origObj:", origObj)
+		tsr.Position = ts.tsLog.Put(db, origObj.GetObjectType(), key,
+			origObj.GetBuffer())
+		if tsr.Position == nil {
+			log.Panicln(err)
 		}
 	}
 	tsr.Key = key
@@ -128,11 +129,11 @@ func (ts *Ts) DeleteDBKey(db *db.DB, key []byte) {
 	tsr := NewTsRecord(DeleteDbKey)
 	tsr.Key = key
 	tsr.Dbptr = db
-	if origObj := db.GetDbKey(key); origObj != nil {
-		tsr.Offset = ts.tsLog.Put(db, origObj.GetObjectType(), key,
+	if origObj := db.GetDbObj(key); origObj != nil {
+		tsr.Position = ts.tsLog.Put(db, origObj.GetObjectType(), key,
 			origObj.GetBuffer())
-		if tsr.Offset == nil {
-			log.Fatalln(err)
+		if tsr.Position == nil {
+			log.Panicln(err)
 		}
 	}
 	ts.AddTsRecord(tsr)
@@ -140,16 +141,16 @@ func (ts *Ts) DeleteDBKey(db *db.DB, key []byte) {
 	if obj != nil {
 		ts.delMagicDb(key)
 	} else {
-		obj = db.GetDbKey(key)
+		obj = db.GetDbObj(key)
 		if obj != nil {
 			ts.setMagicDb(key, obj)
-			db.DeleteKey(key)
+			db.DeleteDbObj(key)
 		}
 	}
 }
 
 func (ts *Ts) GetDBKey(db *db.DB, key []byte) *ds.Object {
-	if obj := db.GetDbKey(key); obj != nil {
+	if obj := db.GetDbObj(key); obj != nil {
 		return obj
 	} else {
 		obj := ts.getMagicDb(key)
@@ -184,13 +185,16 @@ func (ts *Ts) storeTsr() {
 		if tsr, ok = e.Value.(*TsRecord); !ok {
 			continue
 		}
-		if tsr.Offset != nil {
-			list.Put(tsr.Offset)
+		if tsr.Position != nil {
+			list.Put(tsr.Position)
 		}
 	}
-	ts.offset = ts.tsLog.PutAMeta(Commit, ts.TsId, list)
-	if ts.offset == nil {
-		log.Fatalln("PutAMeta()")
+	if list.Len() == 0 {
+		return
+	}
+	ts.position = ts.tsLog.PutAMeta(store.Commit, ts.TsId, list)
+	if ts.position == nil {
+		log.Panicln("storeTsr()", list.Len())
 	}
 }
 
@@ -203,8 +207,18 @@ func (ts *Ts) Commit() error {
 	printTsrArray(ts.tsrList)
 	// 保存事务日志
 	ts.storeTsr()
+	// 打上Commit标志
+	if ts.position != nil {
+		ts.tsLog.SetTsStatus(ts.position, store.Commit)
+	}
 	// 开始提交
 	ts.doCommit()
+	log.Println("debug")
+	time.Sleep(time.Second * 10)
+	// 打上Commited标志
+	if ts.position != nil {
+		ts.tsLog.SetTsStatus(ts.position, store.Committed)
+	}
 	return nil
 }
 
@@ -262,6 +276,9 @@ func (ts *Ts) RollBack(savepoint int) error {
 	}
 	printTsrArray(rollbacklist)
 	printTsrArray(ts.tsrList)
+	if rollbacklist.Len() == 0 {
+		return nil
+	}
 	for e := rollbacklist.GetTailNode(); e != nil; e = e.Prev {
 		if tsr, ok = e.Value.(*TsRecord); !ok {
 			continue
@@ -297,7 +314,7 @@ func (ts *Ts) commitATsr(tsr *TsRecord) {
 func (ts *Ts) rollbackDbDel(db *db.DB, key []byte) {
 	obj := ts.getMagicDb(key)
 	if obj != nil {
-		db.SetDbKey(key, obj)
+		db.SetDbObj(key, obj)
 	}
 	ts.delMagicDb(key)
 }
@@ -319,7 +336,7 @@ func (ts *Ts) commitDbAdd(db *db.DB, key []byte) {
 	log.Println("Obj", obj)
 	if obj != nil {
 		ts.datalog.PutKeyValue(db, key, store.None, obj)
-		db.SetDbKey(key, obj)
+		db.SetDbObj(key, obj)
 	}
 }
 

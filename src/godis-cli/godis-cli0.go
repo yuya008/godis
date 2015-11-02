@@ -68,8 +68,8 @@ func main() {
 		log.Fatalln(err)
 	}
 	args := make([]string, 1)
-	args[0] = "A"
-	conn.Write(warp(cmd_del, args))
+	args[0] = "B"
+	conn.Write(warp(cmd_sget, args))
 
 	data := readData(conn)
 	fmt.Println(data)

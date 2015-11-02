@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"sync"
+	"sync/atomic"
 	"utils"
 )
 
@@ -20,6 +21,13 @@ const (
 	TsLogFilePrefix             = "tslog_%d"
 	DefaultTsLogFileMaxSize     = 1000000000
 	DefaultTsLogMetaFileMaxSize = 1000000000
+	MaxWriteFd                  = 128
+)
+
+const (
+	NotCommit = iota
+	Commit
+	Committed
 )
 
 var (
@@ -37,15 +45,18 @@ type TsLog struct {
 	dataFileMinN int
 	dataFileMaxN int
 
-	metaFileMinN int
-	metaFileMaxN int
-	mutex0       sync.Mutex
-	mutex1       sync.Mutex
+	metaFileMinN      int
+	metaFileMaxN      int
+	mutex0            sync.Mutex
+	curMetaFileOffset int64
+	mutex1            sync.Mutex
+	wfilesN           uint32
 }
 
 type RecordPosition struct {
 	FileNo uint16
 	Offset int64
+	File   *os.File
 }
 
 func NewTsLog(sec *goconf.Section) (*TsLog, error) {
@@ -60,7 +71,7 @@ func NewTsLog(sec *goconf.Section) (*TsLog, error) {
 		if v, err := sec.String("datadir"); err == nil {
 			dir = fmt.Sprintf("%s/%s", v, "ts")
 		} else {
-			log.Fatalln("Please configure dataDir!")
+			log.Panicln("Please configure dataDir!")
 		}
 	}
 	if v, err := sec.Int("ts_log_max_size"); err == nil {
@@ -85,22 +96,180 @@ func NewTsLog(sec *goconf.Section) (*TsLog, error) {
 	return tslog, nil
 }
 
-func (dl *TsLog) Load() {
-
+func (dl *TsLog) skipAMeta(fd *os.File, curSize *int64) {
+	var length uint16
+	// 跳过id
+	_, err := fd.Seek(8, os.SEEK_CUR)
+	if err != nil {
+		log.Panicln(err)
+	}
+	*curSize += 8
+	err = binary.Read(fd, binary.BigEndian, &length)
+	if err != nil {
+		log.Panicln(err)
+	}
+	*curSize += 2
+	positionLen := int64(length * 10)
+	_, err = fd.Seek(positionLen, os.SEEK_CUR)
+	if err != nil {
+		log.Panicln(err)
+	}
+	*curSize += positionLen
 }
 
-func (rp *RecordPosition) open() {
-
+func (dl *TsLog) Load(dbs []db.DB) {
+	var (
+		status    uint8
+		totalSize int64
+		curSize   int64
+		offset    int64
+	)
+	for i := dl.metaFileMinN; i <= dl.metaFileMaxN; i++ {
+		log.Println("打开了meta文件", i)
+		fd, err := os.Open(dl.GetMetaFilePath(i))
+		if err != nil {
+			log.Panicln(err)
+		}
+		fileinfo, err := fd.Stat()
+		if err != nil {
+			log.Panicln(err)
+		}
+		totalSize = fileinfo.Size()
+		log.Println("打开了meta文件总字节数", totalSize)
+		for totalSize > curSize {
+			offset, err = fd.Seek(0, os.SEEK_CUR)
+			if err != nil {
+				log.Panicln(err)
+			}
+			err = binary.Read(fd, binary.BigEndian, &status)
+			if err != nil {
+				log.Panicln(err)
+			}
+			curSize += 1
+			log.Println("meta状态", status)
+			if status == Commit {
+				dl.rollBackCommitTs(fd, dbs, &curSize)
+				dl.SetTsStatus(&RecordPosition{
+					FileNo: uint16(i),
+					Offset: offset,
+				}, NotCommit)
+			} else {
+				dl.skipAMeta(fd, &curSize)
+			}
+		}
+		fd.Close()
+	}
 }
 
-func (dl *TsLog) SetStatus(rp *RecordPosition, s uint8) {
-	rp.open()
+func (dl *TsLog) loadARowData(fileNo uint16, offset int64, dbs []db.DB) {
+	file, err := os.Open(dl.GetDataFilePath(int(fileNo)))
+	defer file.Close()
+	if err != nil {
+		log.Panicln(err)
+	}
+	_, err = file.Seek(offset, os.SEEK_SET)
+	if err != nil {
+		log.Panicln(err)
+	}
+	var (
+		dbid    uint16
+		objtype uint8
+	)
+	err = binary.Read(file, binary.BigEndian, &dbid)
+	if err != nil {
+		log.Panicln(err)
+	}
+	log.Println("loadARowData()", dbid)
+	err = binary.Read(file, binary.BigEndian, &objtype)
+	if err != nil {
+		log.Panicln(err)
+	}
+	log.Println("loadARowData()", objtype)
+	switch objtype {
+	case ds.STRING:
+		if dbid >= uint16(len(dbs)) {
+			log.Panicln("dbs too small")
+		}
+		dbs[dbid].LoadDbObjFromReader(file, ds.STRING)
+	default:
+		log.Panicln("unknow obj type")
+	}
+}
+
+func (dl *TsLog) rollBackCommitTs(fd *os.File, dbs []db.DB, curSize *int64) {
+	var (
+		tsid   uint64
+		length uint16
+		i      uint16
+		fileNo uint16
+		offset int64
+	)
+	err := binary.Read(fd, binary.BigEndian, &tsid)
+	if err != nil {
+		log.Panicln(err)
+	}
+	*curSize += 8
+	log.Println("meta tsid", tsid)
+	err = binary.Read(fd, binary.BigEndian, &length)
+	if err != nil {
+		log.Panicln(err)
+	}
+	*curSize += 2
+	log.Println("meta length", length)
+	for ; i < length; i++ {
+		err = binary.Read(fd, binary.BigEndian, &fileNo)
+		if err != nil {
+			log.Panicln(err)
+		}
+		*curSize += 2
+		log.Println("meta fileNo", fileNo)
+		err = binary.Read(fd, binary.BigEndian, &offset)
+		if err != nil {
+			log.Panicln(err)
+		}
+		*curSize += 8
+		log.Println("meta offset", offset)
+		dl.loadARowData(fileNo, offset, dbs)
+	}
+}
+
+func (rp *RecordPosition) open(dl *TsLog) {
+	if atomic.AddUint32(&dl.wfilesN, 1) > MaxWriteFd {
+		log.Panicln("wfilesN upper limit is reached!")
+	}
+	var err error
+	rp.File, err = os.OpenFile(dl.GetMetaFilePath(int(rp.FileNo)),
+		os.O_RDWR, 0600)
+	if err != nil {
+		log.Panicln(err)
+	}
+	_, err = rp.File.Seek(rp.Offset, os.SEEK_SET)
+	if err != nil {
+		log.Panicln(err)
+	}
+}
+
+func (rp *RecordPosition) destroy(dl *TsLog) {
+	rp.File.Close()
+	atomic.AddUint32(&dl.wfilesN, ^uint32(0))
+}
+
+func (dl *TsLog) SetTsStatus(rp *RecordPosition, s uint8) {
+	if rp == nil {
+		return
+	}
+	rp.open(dl)
+	err := binary.Write(rp.File, binary.BigEndian, &s)
+	if err != nil {
+		log.Panicln(err)
+	}
+	rp.destroy(dl)
 }
 
 func (dl *TsLog) scanTsLogFile() error {
 	dir, err := os.Open(dl.dir)
 	if err != nil {
-		log.Fatalln(err)
+		log.Panicln(err)
 	}
 	files, err := dir.Readdirnames(0)
 	if err != nil {
@@ -108,17 +277,18 @@ func (dl *TsLog) scanTsLogFile() error {
 	}
 	dl.metaFileMaxN, dl.metaFileMinN = utils.FindFileNMaxAndMin(files, TsLogMetaFilePrefix)
 	dl.metaFile, err = os.OpenFile(dl.GetMetaFilePath(dl.metaFileMaxN),
-		os.O_RDWR|os.O_CREATE|os.O_APPEND, 0700)
+		os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
 	if err != nil {
 		return err
 	}
-
 	dl.dataFileMaxN, dl.dataFileMinN = utils.FindFileNMaxAndMin(files, TsLogFilePrefix)
 	dl.dataFile, err = os.OpenFile(dl.GetDataFilePath(dl.dataFileMaxN),
-		os.O_RDWR|os.O_CREATE|os.O_APPEND, 0700)
+		os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
 	if err != nil {
 		return err
 	}
+	log.Println(dl)
+	dir.Close()
 	return nil
 }
 
@@ -133,8 +303,11 @@ func (dl *TsLog) GetDataFilePath(no int) string {
 func (dl *TsLog) PutAMeta(
 	status uint8,
 	id uint64,
-	offsetlist ds.List,
+	list ds.List,
 ) *RecordPosition {
+	if list.Len() == 0 {
+		return nil
+	}
 	buffer := bytes.NewBuffer(nil)
 	err := binary.Write(buffer, binary.BigEndian, &status)
 	if err != nil {
@@ -144,18 +317,20 @@ func (dl *TsLog) PutAMeta(
 	if err != nil {
 		return nil
 	}
-	var tn uint16 = uint16(offsetlist.Len())
+	var tn uint16 = uint16(list.Len())
 	err = binary.Write(buffer, binary.BigEndian, &tn)
 	if err != nil {
 		return nil
 	}
+	log.Println("PutAMeta()", dl.metaFile)
 	isswitchfile := dl.testFileSize(dl.metaFile, int64(dl.metaFileMaxSize))
 	var wfilen uint16 = uint16(dl.metaFileMaxN)
 	if isswitchfile {
 		wfilen++
 	}
-	for e := offsetlist.GetFirstNode(); e != nil; e = e.Next {
+	for e := list.GetFirstNode(); e != nil; e = e.Next {
 		if v, ok := e.Value.(*RecordPosition); ok {
+			log.Println(v)
 			err := binary.Write(buffer, binary.BigEndian, &v.FileNo)
 			if err != nil {
 				return nil
@@ -171,13 +346,17 @@ func (dl *TsLog) PutAMeta(
 	if isswitchfile {
 		dl.switchMetaFile()
 	}
-	dl.metaFile.Write(buffer.Bytes())
+	log.Println("PutAMeta()", isswitchfile)
 	offset, err := dl.metaFile.Seek(0, os.SEEK_CUR)
 	if err != nil {
 		return nil
 	}
+	_, err = dl.metaFile.Write(buffer.Bytes())
+	if err != nil {
+		log.Println("PutAMeta()", err)
+	}
 	return &RecordPosition{
-		FileNo: uint16(dl.metaFileMaxSize),
+		FileNo: uint16(dl.metaFileMaxN),
 		Offset: offset,
 	}
 }
@@ -214,13 +393,15 @@ func (dl *TsLog) Put(db *db.DB, objtype uint8, args ...[]byte) *RecordPosition {
 	if dl.testFileSize(dl.dataFile, int64(dl.dataFileMaxSize)) {
 		dl.switchDataFile()
 	}
-	dl.dataFile.Write(buffer.Bytes())
 	offset, err := dl.dataFile.Seek(0, os.SEEK_CUR)
 	if err != nil {
 		return nil
 	}
+	dl.dataFile.Write(buffer.Bytes())
+	log.Println("tslog.Put() FileNo", dl.dataFileMaxN)
+	log.Println("tslog.Put() Offset", offset)
 	return &RecordPosition{
-		FileNo: uint16(dl.dataFileMaxSize),
+		FileNo: uint16(dl.dataFileMaxN),
 		Offset: offset,
 	}
 }
@@ -230,9 +411,9 @@ func (dl *TsLog) switchMetaFile() {
 	dl.metaFile.Close()
 	dl.metaFileMaxN++
 	dl.metaFile, err = os.OpenFile(dl.GetMetaFilePath(dl.metaFileMaxN),
-		os.O_RDWR|os.O_CREATE|os.O_APPEND, 0700)
+		os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
 	if err != nil {
-		log.Fatalln(err)
+		log.Panicln(err)
 	}
 }
 
@@ -241,16 +422,16 @@ func (dl *TsLog) switchDataFile() {
 	dl.dataFile.Close()
 	dl.dataFileMaxN++
 	dl.dataFile, err = os.OpenFile(dl.GetDataFilePath(dl.dataFileMaxN),
-		os.O_RDWR|os.O_CREATE|os.O_APPEND, 0700)
+		os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
 	if err != nil {
-		log.Fatalln(err)
+		log.Panicln(err)
 	}
 }
 
 func (dl *TsLog) testFileSize(file *os.File, maxsize int64) bool {
 	fileinfo, err := file.Stat()
 	if err != nil {
-		log.Fatalln(err)
+		log.Panicln("testFileSize", err)
 	}
 	return fileinfo.Size() >= maxsize
 }

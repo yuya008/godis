@@ -81,17 +81,17 @@ func InitServer(godis *Godis, ser *goconf.Section) {
 	if _, err := ser.String("datadir"); err == nil {
 		godis.Dl, err = store.NewDataLog(ser)
 		if err != nil {
-			log.Fatalln(err)
+			log.Panicln(err)
 		}
 		godis.Dl.LoadDiskData(godis.Dbs)
 		godis.Dl.StartDataWriteThread()
 		godis.Tl, err = store.NewTsLog(ser)
 		if err != nil {
-			log.Fatalln(err)
+			log.Panicln(err)
 		}
-		godis.Tl.Load()
+		godis.Tl.Load(godis.Dbs)
 	} else {
-		log.Fatalln("Please configure dataDir!")
+		log.Panicln("Please configure dataDir!")
 	}
 }
 
@@ -99,13 +99,13 @@ func StartServer(godis *Godis) {
 	log.Println("服务在", net.JoinHostPort(godis.Host, godis.Port))
 	listen, err := net.Listen("tcp", net.JoinHostPort(godis.Host, godis.Port))
 	if err != nil {
-		log.Fatalln(err)
+		log.Panicln(err)
 	}
 	for {
 		conn, err := listen.Accept()
 		log.Println("接收到一个连接")
 		if err != nil {
-			log.Fatalln(err)
+			log.Panicln(err)
 		}
 		if godis.CurrentClientsN >= godis.MaxClientsN {
 			log.Println("连接数达到上限")
