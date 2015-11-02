@@ -150,15 +150,10 @@ func (ts *Ts) DeleteDBKey(db *db.DB, key []byte) {
 }
 
 func (ts *Ts) GetDBKey(db *db.DB, key []byte) *ds.Object {
-	if obj := db.GetDbObj(key); obj != nil {
+	if obj := ts.getMagicDb(key); obj != nil {
 		return obj
-	} else {
-		obj := ts.getMagicDb(key)
-		if obj != nil {
-			return obj
-		}
 	}
-	return nil
+	return db.GetDbObj(key)
 }
 
 func (ts *Ts) doCommit() {
@@ -213,8 +208,6 @@ func (ts *Ts) Commit() error {
 	}
 	// 开始提交
 	ts.doCommit()
-	log.Println("debug")
-	time.Sleep(time.Second * 10)
 	// 打上Commited标志
 	if ts.position != nil {
 		ts.tsLog.SetTsStatus(ts.position, store.Committed)
@@ -297,8 +290,8 @@ func (ts *Ts) rollBackATsr(tsr *TsRecord) {
 		ts.rollbackDbDel(tsr.Dbptr, tsr.Key)
 	case AddDbKey:
 		ts.rollbackDbAdd(tsr.Dbptr, tsr.Key)
-	case SavePoint:
-		ts.curSavePoint--
+		// case SavePoint:
+		// 	ts.curSavePoint--
 	}
 }
 

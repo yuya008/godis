@@ -276,7 +276,7 @@ func loadAStringObject(reader *os.File, witchdb uint16, dbs []db.DB) int64 {
 		log.Fatalln(Err_data_format_fail)
 	}
 	curSize += int64(keylen)
-	log.Println("loadAStringObject keybuf", keybuf)
+	log.Println("loadAStringObject keybuf", string(keybuf))
 	// 读取键操作
 	err = binary.Read(reader, binary.BigEndian, &op)
 	if err != nil {
@@ -308,6 +308,8 @@ func loadAStringObject(reader *os.File, witchdb uint16, dbs []db.DB) int64 {
 		log.Fatalln(Err_data_format_fail)
 	}
 	curSize += int64(valuelen)
+	log.Println("loadAStringObject valuebuf", string(valuebuf))
+	log.Println()
 	db.SetDbObj(keybuf, ds.CreateStringObject(valuebuf, ds.NonTs))
 	return curSize
 }
